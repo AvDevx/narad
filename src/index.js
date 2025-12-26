@@ -1,11 +1,18 @@
 import { kafkaService } from "./services/kafka.js";
+import { redisService } from "./services/redis.js";
 import { config } from "./config/env.js";
 import { createApp } from "./app/index.js";
+
+// Initialize services
+console.log("🔌 Initializing services...");
 
 // Initialize Kafka
 await kafkaService.connectProducer();
 
-// // Send test message to confirm connection
+// Initialize Redis
+await redisService.connect();
+
+// Send test message to confirm Kafka connection
 await kafkaService.send("websocket", {
   type: "server-status",
   message: "server is connected",
@@ -24,5 +31,6 @@ console.log(`WebSocket available at ws://${app.server?.hostname}:${app.server?.p
 process.on("SIGINT", async () => {
   console.log("\n🛑 Shutting down...");
   await kafkaService.disconnect();
+  await redisService.disconnect();
   process.exit(0);
 });

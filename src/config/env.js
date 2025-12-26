@@ -50,4 +50,15 @@ export const config = {
   server: {
     port: process.env.PORT || 8080,
   },
+  redis: {
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT) || 6379,
+    tls: process.env.REDIS_TLS === "true" ? {} : false,
+    // Connection options
+    connectTimeout: 10000,
+    // TLS configuration if needed for AWS ElastiCache
+    ...(isProd && {
+      tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+    }),
+  },
 };
