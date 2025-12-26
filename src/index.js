@@ -1,34 +1,28 @@
-import { Elysia } from "elysia";
+import { kafkaService } from "./services/kafka.js";
+import { config } from "./config/env.js";
+import { createApp } from "./app/index.js";
 
-const intervals = new Map();
+// Initialize Kafka
+await kafkaService.connectProducer();
 
-const app = new Elysia()
-  .ws("/ws", {
-    open(ws) {
-      console.log("Client connected");
-      let count = 0;
-      const interval = setInterval(() => {
-        count++;
-        ws.send(`Message #${count} at ${new Date().toISOString()}`);
-      }, 1000);
-      intervals.set(ws.id, interval);
-    },
-    message(ws, message) {
-      console.log("Received:", message);
-      ws.send(`Echo: ${message}`);
-    },
-    close(ws) {
-      console.log("Client disconnected");
-      const interval = intervals.get(ws.id);
-      if (interval) {
-        clearInterval(interval);
-        intervals.delete(ws.id);
-      }
-    },
-  })
-  .listen(process.env.PORT || 8080);
+// // Send test message to confirm connection
+await kafkaService.send("websocket", {
+  type: "server-status",
+  message: "server is connected",
+  timestamp: new Date().toISOString(),
+});
+
+// Create and start app
+const app = createApp().listen(config.server.port);
 
 console.log(
   `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
 );
 console.log(`WebSocket available at ws://${app.server?.hostname}:${app.server?.port}/ws`);
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("\n🛑 Shutting down...");
+  await kafkaService.disconnect();
+  process.exit(0);
+});
