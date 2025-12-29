@@ -18,6 +18,17 @@ class UserConnectionManager {
    */
   async addConnection(userId, websocketId, ws) {
     try {
+      // Validate required parameters
+      if (!userId || typeof userId !== 'string') {
+        throw new Error('userId must be a non-empty string');
+      }
+      if (!websocketId || typeof websocketId !== 'string') {
+        throw new Error('websocketId must be a non-empty string');
+      }
+      if (!ws) {
+        throw new Error('WebSocket instance is required');
+      }
+
       // Store in memory maps
       if (!this.userConnections.has(userId)) {
         this.userConnections.set(userId, new Set());
@@ -161,6 +172,20 @@ class UserConnectionManager {
   }
 
   /**
+   * Get user connections map (for admin access)
+   */
+  getUserConnections() {
+    return this.userConnections;
+  }
+
+  /**
+   * Get websocket store (for admin access)
+   */
+  getWebsocketStore() {
+    return this.websocketStore;
+  }
+
+  /**
    * Store user connection in Redis for persistence
    * @private
    */
@@ -172,12 +197,23 @@ class UserConnectionManager {
       return;
     }
 
+    // Additional validation before Redis operation
+    if (!userId || typeof userId !== 'string') {
+      console.error('Cannot store in Redis: userId is invalid:', userId);
+      return;
+    }
+    if (!websocketId || typeof websocketId !== 'string') {
+      console.error('Cannot store in Redis: websocketId is invalid:', websocketId);
+      return;
+    }
+
     try {
       const key = `user_connections:${userId}`;
       await redisService.client.sAdd(key, websocketId);
       await redisService.client.expire(key, 3600); // 1 hour expiry
     } catch (error) {
       console.error("Failed to store connection in Redis:", error.message);
+      console.error("Parameters:", { userId, websocketId, type: typeof websocketId });
     }
   }
 

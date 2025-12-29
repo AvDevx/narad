@@ -17,7 +17,7 @@ class KafkaService {
       retry: config.kafka.retry,
       ssl: config.kafka.ssl,
       sasl: config.kafka.sasl,
-      logLevel: isDev ? logLevel.DEBUG : logLevel.ERROR,
+      logLevel: isDev ? logLevel.INFO : logLevel.ERROR,
     });
 
     console.log(

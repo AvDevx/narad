@@ -1,21 +1,163 @@
 import { Elysia } from "elysia";
 import { kafkaService } from "../../../services/kafka.js";
 import { userConnectionManager } from "../../../services/userConnectionManager.js";
+import { redisService } from "../../../services/redis.js";
 
 // Store intervals for cleanup
 const intervals = new Map();
 
 export const websocketRoutes = new Elysia({ prefix: "/ws" })
 .ws("/", {
-  open(ws) {
-    console.log(`🔗 WebSocket connection opened: ${ws.id}`);
+  async open(ws) {
+    console.log(`🔗 WebSocket connection attempt: ${ws.id}`);
     
-    // Wait for user authentication message
-    ws.send(JSON.stringify({
-      type: "auth_required",
-      message: "Please send your user ID to authenticate",
-      timestamp: new Date().toISOString()
-    }));
+    // Get session ID from query parameters
+    let sessionId = null;
+    try {
+      // Try different ways to access the URL depending on Elysia version
+      let url;
+      if (ws.raw && ws.raw.url) {
+        // Method 1: Direct URL access
+        url = ws.raw.url;
+      } else if (ws.url) {
+        // Method 2: Direct on ws object
+        url = ws.url;
+      } else {
+        // Method 3: Try to get from request context
+        url = ws.data?.url || '';
+      }
+      
+      // Parse the URL to extract query parameters
+      if (url) {
+        const urlParts = url.split('?');
+        if (urlParts.length > 1) {
+          const params = new URLSearchParams(urlParts[1]);
+          sessionId = params.get('sid');
+        }
+      }
+      
+      console.log(`🔍 Parsed URL: ${url}, Session ID: ${sessionId}`);
+    } catch (error) {
+      console.error(`❌ Error parsing session ID:`, error.message);
+      ws.send(JSON.stringify({
+        type: "connection_rejected",
+        message: "Failed to parse session ID from URL",
+        timestamp: new Date().toISOString()
+      }));
+      ws.close();
+      return;
+    }
+
+    
+    if (!sessionId) {
+      console.log(`❌ Connection rejected - no session ID provided: ${ws.id}`);
+      ws.send(JSON.stringify({
+        type: "connection_rejected",
+        message: "Session ID is required. Connect with: ws://localhost:8080/ws?sid=<your-session-id>",
+        timestamp: new Date().toISOString()
+      }));
+      ws.close();
+      return;
+    }
+    
+    // Validate session in Redis
+    try {
+      const sessionData = await redisService.get(`${sessionId}`);
+
+      console.log(`🔍 Retrieved session data for ID ${sessionId}:`, sessionData);
+      
+      if (!sessionData) {
+        console.log(`❌ Connection rejected - invalid session ID: ${sessionId}`);
+        ws.send(JSON.stringify({
+          type: "connection_rejected",
+          message: "Invalid or expired session ID",
+          timestamp: new Date().toISOString()
+        }));
+        ws.close();
+        return;
+      }
+      
+      const session = JSON.parse(sessionData);
+
+      console.log("User session data:", session);
+      
+    //   if (!session.isActive) {
+    //     console.log(`❌ Connection rejected - inactive session: ${sessionId}`);
+    //     ws.send(JSON.stringify({
+    //       type: "connection_rejected",
+    //       message: "Session is not active",
+    //       timestamp: new Date().toISOString()
+    //     }));
+    //     ws.close();
+    //     return;
+    //   }
+      
+      // Store session info in WebSocket data
+      ws.data = { 
+        sessionId,
+        userId: session._id,
+        sessionData: session
+      };
+      
+      console.log(`✅ WebSocket connection authorized for user ${session._id} with session ${sessionId}`);
+      
+      // Generate a WebSocket ID if one doesn't exist
+      let websocketId = ws.id;
+      if (!websocketId || typeof websocketId !== 'string') {
+        // Generate a unique WebSocket ID
+        websocketId = `ws_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        console.log(`🔗 Generated WebSocket ID: ${websocketId} (original ws.id: ${ws.id})`);
+      }
+      
+      // Automatically register the connection
+      const success = await userConnectionManager.addConnection(session._id, websocketId, ws);
+      
+      if (success) {
+        // Store the websocketId in ws.data for later use
+        ws.data.websocketId = websocketId;
+        
+        ws.send(JSON.stringify({
+          type: "connection_established",
+          message: `Connected successfully as user: ${session._id}`,
+          userId: session._id,
+          sessionId,
+          websocketId: websocketId,
+          timestamp: new Date().toISOString()
+        }));
+        
+        // Start heartbeat for the connected user
+        startHeartbeat(ws, session.userId);
+        
+        // Log connection stats
+        const stats = userConnectionManager.getConnectionStats();
+        console.log(`📊 Connection stats:`, stats);
+        
+        // Send Kafka notification about user connection
+        await kafkaService.send("websocket", {
+          type: "user_connected",
+          userId: session.userId,
+          sessionId,
+          websocketId: websocketId,
+          timestamp: new Date().toISOString(),
+          connectionStats: stats
+        });
+      } else {
+        ws.send(JSON.stringify({
+          type: "connection_error",
+          message: "Failed to register user connection",
+          timestamp: new Date().toISOString()
+        }));
+        ws.close();
+      }
+    } catch (error) {
+      console.error(`❌ Error validating session ${sessionId}:`, error.message);
+      ws.send(JSON.stringify({
+        type: "connection_rejected",
+        message: "Session validation failed",
+        timestamp: new Date().toISOString()
+      }));
+      ws.close();
+    }
   },
   
   message(ws, message) {
@@ -47,26 +189,21 @@ export const websocketRoutes = new Elysia({ prefix: "/ws" })
         }
       }
 
-      console.log(`📨 Received message from WebSocket ${ws.id}:`, parsedMessage);
+      console.log(`📨 Received message from WebSocket ${ws.data?.websocketId || ws.id}:`, parsedMessage);
 
-      // Handle authentication
-      if (parsedMessage.type === "auth" && parsedMessage.userId) {
-        handleUserAuthentication(ws, parsedMessage.userId);
-        return;
-      }
-
-      // Handle regular messages (only if user is authenticated)
+      // Handle messages (user is already authenticated via session)
       if (ws.data?.userId) {
         handleAuthenticatedMessage(ws, parsedMessage);
       } else {
         ws.send(JSON.stringify({
           type: "error",
-          message: "Please authenticate first by sending: {\"type\": \"auth\", \"userId\": \"your-user-id\"}",
+          message: "Connection not properly authenticated",
           timestamp: new Date().toISOString()
         }));
+        ws.close();
       }
     } catch (error) {
-      console.error(`❌ Error handling message from WebSocket ${ws.id}:`, error.message);
+      console.error(`❌ Error handling message from WebSocket ${ws.data?.websocketId || ws.id}:`, error.message);
       ws.send(JSON.stringify({
         type: "error",
         message: "Failed to process message",
@@ -76,79 +213,41 @@ export const websocketRoutes = new Elysia({ prefix: "/ws" })
   },
   
   close(ws) {
-    console.log(`🔌 WebSocket disconnected: ${ws.id}`);
+    const websocketId = ws.data?.websocketId || ws.id;
+    console.log(`🔌 WebSocket disconnected: ${websocketId}`);
     
-    // Clean up user connection
+    // Clean up user connection and send disconnect event
     if (ws.data?.userId) {
-      userConnectionManager.removeConnection(ws.id);
+      userConnectionManager.removeConnection(websocketId);
+      
+      // Send Kafka notification about user disconnection
+      kafkaService.send("websocket", {
+        type: "user_disconnected", 
+        userId: ws.data.userId,
+        sessionId: ws.data.sessionId,
+        websocketId: websocketId,
+        timestamp: new Date().toISOString(),
+        connectionStats: userConnectionManager.getConnectionStats()
+      }).catch(error => {
+        console.error(`❌ Failed to send disconnect event to Kafka:`, error.message);
+      });
     }
     
     // Clean up heartbeat interval
-    const interval = intervals.get(ws.id);
+    const interval = intervals.get(websocketId);
     if (interval) {
       clearInterval(interval);
-      intervals.delete(ws.id);
+      intervals.delete(websocketId);
     }
   },
 });
-
-/**
- * Handle user authentication for WebSocket connection
- */
-async function handleUserAuthentication(ws, userId) {
-  try {
-    // Store user data in WebSocket
-    ws.data = { userId };
-    
-    // Register connection with user connection manager
-    const success = await userConnectionManager.addConnection(userId, ws.id, ws);
-    
-    if (success) {
-      ws.send(JSON.stringify({
-        type: "auth_success",
-        message: `Authenticated as user: ${userId}`,
-        userId,
-        websocketId: ws.id,
-        timestamp: new Date().toISOString()
-      }));
-
-      // Start heartbeat for authenticated users
-      startHeartbeat(ws, userId);
-      
-      // Log connection stats
-      const stats = userConnectionManager.getConnectionStats();
-      console.log(`📊 Connection stats:`, stats);
-      
-      // Send Kafka notification about user connection
-      await kafkaService.send("websocket", {
-        type: "user_connected",
-        userId,
-        websocketId: ws.id,
-        timestamp: new Date().toISOString(),
-        connectionStats: stats
-      });
-    } else {
-      ws.send(JSON.stringify({
-        type: "auth_error",
-        message: "Failed to register user connection",
-        timestamp: new Date().toISOString()
-      }));
-    }
-  } catch (error) {
-    console.error(`❌ Authentication error for user ${userId}:`, error.message);
-    ws.send(JSON.stringify({
-      type: "auth_error",
-      message: "Authentication failed",
-      timestamp: new Date().toISOString()
-    }));
-  }
-}
 
 /**
  * Handle messages from authenticated users
  */
 async function handleAuthenticatedMessage(ws, message) {
   const userId = ws.data.userId;
+  const sessionId = ws.data.sessionId;
   
   try {
     // Echo message back to sender
@@ -156,6 +255,7 @@ async function handleAuthenticatedMessage(ws, message) {
       type: "message_received",
       originalMessage: message,
       userId,
+      sessionId,
       timestamp: new Date().toISOString()
     }));
 
@@ -163,12 +263,13 @@ async function handleAuthenticatedMessage(ws, message) {
     await kafkaService.send("websocket-inbound", {
       type: "user_message",
       userId,
-      websocketId: ws.id,
+      sessionId,
+      websocketId: ws.data?.websocketId || ws.id,
       content: message,
       timestamp: new Date().toISOString(),
     });
     
-    console.log(`📤 Message from user ${userId} sent to Kafka`);
+    console.log(`📤 Message from user ${userId} (session: ${sessionId}) sent to Kafka`);
   } catch (error) {
     console.error(`❌ Error handling message from user ${userId}:`, error.message);
     ws.send(JSON.stringify({
@@ -184,6 +285,7 @@ async function handleAuthenticatedMessage(ws, message) {
  */
 function startHeartbeat(ws, userId) {
   let count = 0;
+  const sessionId = ws.data.sessionId;
   const interval = setInterval(async () => {
     try {
       count++;
@@ -191,6 +293,7 @@ function startHeartbeat(ws, userId) {
         type: "heartbeat",
         count,
         userId,
+        sessionId,
         timestamp: new Date().toISOString()
       };
       
@@ -201,7 +304,8 @@ function startHeartbeat(ws, userId) {
         await kafkaService.send("websocket", {
           type: "user_heartbeat",
           userId,
-          websocketId: ws.id,
+          sessionId,
+          websocketId: ws.data?.websocketId || ws.id,
           count,
           timestamp: new Date().toISOString(),
         });
@@ -209,9 +313,9 @@ function startHeartbeat(ws, userId) {
     } catch (error) {
       console.error(`❌ Heartbeat error for user ${userId}:`, error.message);
       clearInterval(interval);
-      intervals.delete(ws.id);
+      intervals.delete(ws.data?.websocketId || ws.id);
     }
   }, 5000); // Send heartbeat every 5 seconds
   
-  intervals.set(ws.id, interval);
+  intervals.set(ws.data?.websocketId || ws.id, interval);
 }
