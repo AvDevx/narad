@@ -97,24 +97,32 @@ class KafkaService {
       throw new Error("Kafka consumer not connected");
     }
 
-    await this.consumer.subscribe({ topic, fromBeginning: false });
+    try {
+      await this.consumer.subscribe({ topic, fromBeginning: false });
 
-    await this.consumer.run({
-      eachMessage: async ({ topic, partition, message }) => {
-        const value = message.value?.toString();
-        try {
-          const parsed = JSON.parse(value);
-          await onMessage(parsed, { topic, partition });
-        } catch {
-          await onMessage(value, { topic, partition });
-        }
-      },
-    });
+      await this.consumer.run({
+        eachMessage: async ({ topic, partition, message }) => {
+          const value = message.value?.toString();
+          try {
+            const parsed = JSON.parse(value);
+            await onMessage(parsed, { topic, partition });
+          } catch {
+            await onMessage(value, { topic, partition });
+          }
+        },
+      });
 
-    console.log(`📥 Subscribed to topic: ${topic}`);
+      console.log(`📥 Subscribed to topic: ${topic}`);
+    } catch (error) {
+      console.error(`❌ Failed to subscribe to topic ${topic}:`, error.message);
+      if (isDev) {
+        console.log(`⚠️  Running in dev mode, continuing without ${topic} subscription`);
+      } else {
+        throw error;
+      }
+    }
   }
-
-  async disconnect() {
+   async disconnect() {
     if (this.producer) {
       await this.producer.disconnect();
       console.log("🔌 Kafka producer disconnected");
@@ -125,7 +133,10 @@ class KafkaService {
     }
     this.isConnected = false;
   }
-}
+  }
+
+ 
+
 
 // Export singleton instance
 export const kafkaService = new KafkaService();
