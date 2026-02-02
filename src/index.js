@@ -1,5 +1,5 @@
-import { kafkaService } from "./services/kafka.js";
-import { redisService } from "./services/redis.js";
+import { kafkaService } from "./services/system/kafka.js";
+import { redisService } from "./services/system/redis.js";
 import { messageRoutingService } from "./services/messageRoutingService.js";
 import { config } from "./config/env.js";
 import { createApp } from "./app/index.js";

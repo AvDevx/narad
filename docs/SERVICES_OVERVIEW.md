@@ -15,7 +15,7 @@ This document provides an overview of the messaging and caching services availab
 │  └───────────┘  │    │  │ Consumers │  │    │  │ Sessions  │  │
 │                 │    │  └───────────┘  │    │  │ Realtime  │  │
 │  ┌───────────┐  │    │                 │    │  └───────────┘  │
-│  │Middleware │──┼─────────────────────────────┼──────────────  │
+│  │Middleware │──┼───────────────────────────┼─────────────────│
 │  └───────────┘  │    │                 │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
@@ -44,8 +44,8 @@ REDIS_TLS=false
 ### 2. Service Initialization
 
 ```javascript
-import { kafkaService } from './src/services/kafka.js';
-import { redisService } from './src/services/redis.js';
+import { kafkaService } from './src/services/system/kafka.js';
+import { redisService } from './src/services/system/redis.js';
 
 // Initialize services
 async function initializeServices() {
@@ -84,8 +84,8 @@ await initializeServices();
 Combine Kafka and Redis for event-driven cache invalidation:
 
 ```javascript
-import { kafkaService } from './services/kafka.js';
-import { redisService } from './services/redis.js';
+import { kafkaService } from './services/system/kafka.js';
+import { redisService } from './services/system/redis.js';
 
 class EventDrivenCache {
   static async init() {

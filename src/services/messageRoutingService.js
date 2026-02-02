@@ -1,4 +1,4 @@
-import { kafkaService } from "./kafka.js";
+import { kafkaService } from "./system/kafka.js";
 import { userConnectionManager } from "./userConnectionManager.js";
 import { isDev } from "../config/env.js";
 
@@ -72,28 +72,44 @@ class MessageRoutingService {
       return;
     }
 
-    const { userId, messageData, messageType = "notification" } = message;
+    const { userId, sessionId, messageData, messageType = "notification", targetType = "user" } = message;
 
-    // Route message to user
-    const result = await userConnectionManager.sendMessageToUser(userId, {
-      type: messageType,
-      data: messageData,
-      timestamp: new Date().toISOString(),
-      source: "kafka",
-      topic: context.topic
-    });
+    let result;
+    
+    if (targetType === "session" && sessionId) {
+      // Send to specific session
+      result = await userConnectionManager.sendMessageToSession(sessionId, {
+        type: messageType,
+        data: messageData,
+        timestamp: new Date().toISOString(),
+        source: "kafka",
+        topic: context.topic
+      });
 
-    // Log routing result
-    if (result.sent) {
-      console.log(`✅ Message routed to user ${userId}: ${result.successCount}/${result.totalAttempts} connections`);
+      if (result.sent) {
+        console.log(`✅ Message routed to session ${sessionId}: ${result.successCount} connection`);
+      } else {
+        console.warn(`⚠️  Failed to route message to session ${sessionId}: ${result.reason}`);
+        await this.handleUndeliveredMessage(`session:${sessionId}`, message, result);
+      }
+    } else if (userId) {
+      // Send to all user sessions (default behavior)
+      result = await userConnectionManager.sendMessageToUser(userId, {
+        type: messageType,
+        data: messageData,
+        timestamp: new Date().toISOString(),
+        source: "kafka",
+        topic: context.topic
+      });
+
+      if (result.sent) {
+        console.log(`✅ Message routed to user ${userId}: ${result.successCount}/${result.totalAttempts} connections`);
+      } else {
+        console.warn(`⚠️  Failed to route message to user ${userId}: ${result.reason}`);
+        await this.handleUndeliveredMessage(userId, message, result);
+      }
     } else {
-      console.warn(`⚠️  Failed to route message to user ${userId}: ${result.reason}`);
-      
-      // If user is not connected, you could implement additional logic here:
-      // - Store message for later delivery
-      // - Send push notification
-      // - Log to analytics
-      await this.handleUndeliveredMessage(userId, message, result);
+      console.error("❌ Message must contain either userId or sessionId:", message);
     }
   }
 
@@ -104,8 +120,11 @@ class MessageRoutingService {
     return (
       message &&
       typeof message === 'object' &&
-      message.userId &&
-      typeof message.userId === 'string' &&
+      (
+        // Must have either userId OR sessionId
+        (message.userId && typeof message.userId === 'string') ||
+        (message.sessionId && typeof message.sessionId === 'string')
+      ) &&
       message.messageData !== undefined
     );
   }
@@ -145,11 +164,35 @@ class MessageRoutingService {
       messageData,
       messageType,
       timestamp: new Date().toISOString(),
-      source: "api"
+      source: "api",
+      targetType: "user" // Send to all user sessions
     };
 
     await kafkaService.send("websocket-inbound", message);
     console.log(`📤 Message queued for user ${userId}`);
+    
+    return message;
+  }
+
+  /**
+   * Send a message to a specific session via Kafka
+   */
+  async sendMessageToSession(sessionId, messageData, messageType = "notification") {
+    if (!sessionId || messageData === undefined) {
+      throw new Error("sessionId and messageData are required");
+    }
+
+    const message = {
+      sessionId,
+      messageData,
+      messageType,
+      timestamp: new Date().toISOString(),
+      source: "api",
+      targetType: "session" // Send to specific session only
+    };
+
+    await kafkaService.send("websocket-inbound", message);
+    console.log(`📤 Message queued for session ${sessionId}`);
     
     return message;
   }

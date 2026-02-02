@@ -38,7 +38,7 @@ KAFKA_SASL_PASSWORD=your_password
 ### Importing the Service
 
 ```javascript
-import { kafkaService } from './services/kafka.js';
+import { kafkaService } from './services/system/kafka.js';
 ```
 
 ### Producer Usage
@@ -66,7 +66,7 @@ await kafkaService.send('user-events', [
 #### Producer Example
 
 ```javascript
-import { kafkaService } from './services/kafka.js';
+import { kafkaService } from './services/system/kafka.js';
 
 class UserEventService {
   static async init() {
@@ -126,7 +126,7 @@ await kafkaService.subscribe('user-events', async (message, { topic, partition }
 #### Advanced Consumer Example
 
 ```javascript
-import { kafkaService } from './services/kafka.js';
+import { kafkaService } from './services/system/kafka.js';
 
 class EventProcessor {
   static async init() {

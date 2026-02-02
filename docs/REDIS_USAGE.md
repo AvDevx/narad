@@ -30,7 +30,7 @@ REDIS_TLS=false
 ### Importing the Service
 
 ```javascript
-import { redisService } from './services/redis.js';
+import { redisService } from './services/system/redis.js';
 ```
 
 ### Connection Management
@@ -119,7 +119,7 @@ if (client) {
 ### 1. Caching API Responses
 
 ```javascript
-import { redisService } from './services/redis.js';
+import { redisService } from './services/system/redis.js';
 
 class ApiCache {
   static async getCachedResponse(endpoint) {

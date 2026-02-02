@@ -5,8 +5,8 @@
  * in a real-world scenario with user session management and event streaming.
  */
 
-import { kafkaService } from '../services/kafka.js';
-import { redisService } from '../services/redis.js';
+import { kafkaService } from '../services/system/kafka.js';
+import { redisService } from '../services/system/redis.js';
 
 /**
  * User Session and Event Management System

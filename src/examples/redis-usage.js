@@ -1,4 +1,4 @@
-import { redisService } from "../services/redis.js";
+import { redisService } from "../services/system/redis.js";
 
 /**
  * Example usage of Redis service

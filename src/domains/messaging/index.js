@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { websocketRoutes } from "./routes/websocket.routes.js";
-import { messagingApiRoutes } from "./routes/messaging-api.routes.js";
+import { messagingApiRoutes } from "./routes/messaging.routes.js";
 
 // Combine all messaging routes
 const messagingRoutes = new Elysia()

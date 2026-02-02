@@ -4,6 +4,7 @@
         "HGETALL",
         "HSET",
         "kafkajs",
+        "Narad",
         "sasl"
     ]
 }

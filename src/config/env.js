@@ -50,6 +50,9 @@ export const config = {
   server: {
     port: process.env.PORT || 8080,
   },
+  admin: {
+    secret: process.env.ADMIN_SECRET || (isDev ? "dev-admin-secret-change-in-production" : ""),
+  },
   redis: {
     host: process.env.REDIS_HOST || "localhost",
     port: parseInt(process.env.REDIS_PORT) || 6379,

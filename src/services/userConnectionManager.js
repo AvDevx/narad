@@ -1,5 +1,4 @@
-import { redisService } from "./redis.js";
-import { isDev } from "../config/env.js";
+
 
 class UserConnectionManager {
   constructor() {
@@ -40,9 +39,6 @@ class UserConnectionManager {
         ws,
         connectionTime: new Date().toISOString(),
       });
-
-      // Also store in Redis for persistence and scaling
-      await this.storeUserConnectionInRedis(userId, websocketId);
       
       console.log(`✅ User ${userId} connected (WebSocket: ${websocketId})`);
       console.log(`📊 Total connections for user ${userId}: ${this.userConnections.get(userId).size}`);
@@ -76,9 +72,6 @@ class UserConnectionManager {
         }
       }
       this.websocketStore.delete(websocketId);
-
-      // Remove from Redis
-      await this.removeUserConnectionFromRedis(userId, websocketId);
       
       console.log(`🔌 User ${userId} disconnected (WebSocket: ${websocketId})`);
       const remainingConnections = this.userConnections.get(userId)?.size || 0;
@@ -142,6 +135,61 @@ class UserConnectionManager {
   }
 
   /**
+   * Send a message to a specific session (single connection)
+   * @param {string} sessionOrWebsocketId - The target session ID or websocket ID
+   * @param {object} message - The message to send
+   */
+  async sendMessageToSession(sessionOrWebsocketId, message) {
+    try {
+      // Find the websocket connection by session ID or websocket ID
+      let targetConnection = null;
+      let targetWebsocketId = null;
+
+      // First, try to find by websocketId directly (most common from dashboard)
+      if (this.websocketStore.has(sessionOrWebsocketId)) {
+        targetConnection = this.websocketStore.get(sessionOrWebsocketId);
+        targetWebsocketId = sessionOrWebsocketId;
+      } else {
+        // Fall back to searching by session ID (sid from URL)
+        for (const [websocketId, connectionInfo] of this.websocketStore) {
+          if (connectionInfo.ws && connectionInfo.ws.data && connectionInfo.ws.data.sessionId === sessionOrWebsocketId) {
+            targetConnection = connectionInfo;
+            targetWebsocketId = websocketId;
+            break;
+          }
+        }
+      }
+
+      if (!targetConnection) {
+        console.warn(`⚠️  No active connection found for session/websocket ${sessionOrWebsocketId}`);
+        return { sent: false, reason: 'session_not_found' };
+      }
+
+      try {
+        const messageString = JSON.stringify(message);
+        targetConnection.ws.send(messageString);
+        console.log(`📤 Message sent to session ${sessionOrWebsocketId} (WebSocket: ${targetWebsocketId})`);
+        return { 
+          sent: true, 
+          successCount: 1, 
+          failureCount: 0,
+          totalAttempts: 1,
+          websocketId: targetWebsocketId,
+          userId: targetConnection.userId
+        };
+      } catch (error) {
+        console.error(`❌ Failed to send message to session ${sessionOrWebsocketId}:`, error.message);
+        // Remove dead connection
+        await this.removeConnection(targetWebsocketId);
+        return { sent: false, reason: 'send_error', error: error.message };
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send message to session ${sessionOrWebsocketId}:`, error.message);
+      return { sent: false, reason: 'send_error', error: error.message };
+    }
+  }
+
+  /**
    * Get all connected users
    */
   getConnectedUsers() {
@@ -185,58 +233,8 @@ class UserConnectionManager {
     return this.websocketStore;
   }
 
-  /**
-   * Store user connection in Redis for persistence
-   * @private
-   */
-  async storeUserConnectionInRedis(userId, websocketId) {
-    if (!redisService.isConnected) {
-      if (isDev) {
-        console.log(`[DEV] Would store user ${userId} connection ${websocketId} in Redis`);
-      }
-      return;
-    }
-
-    // Additional validation before Redis operation
-    if (!userId || typeof userId !== 'string') {
-      console.error('Cannot store in Redis: userId is invalid:', userId);
-      return;
-    }
-    if (!websocketId || typeof websocketId !== 'string') {
-      console.error('Cannot store in Redis: websocketId is invalid:', websocketId);
-      return;
-    }
-
-    try {
-      const key = `user_connections:${userId}`;
-      await redisService.client.sAdd(key, websocketId);
-      await redisService.client.expire(key, 3600); // 1 hour expiry
-    } catch (error) {
-      console.error("Failed to store connection in Redis:", error.message);
-      console.error("Parameters:", { userId, websocketId, type: typeof websocketId });
-    }
-  }
-
-  /**
-   * Remove user connection from Redis
-   * @private
-   */
-  async removeUserConnectionFromRedis(userId, websocketId) {
-    if (!redisService.isConnected) {
-      if (isDev) {
-        console.log(`[DEV] Would remove user ${userId} connection ${websocketId} from Redis`);
-      }
-      return;
-    }
-
-    try {
-      const key = `user_connections:${userId}`;
-      await redisService.client.sRem(key, websocketId);
-    } catch (error) {
-      console.error("Failed to remove connection from Redis:", error.message);
-    }
-  }
 }
+
 
 // Export singleton instance
 export const userConnectionManager = new UserConnectionManager();

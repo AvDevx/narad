@@ -1,10 +1,7 @@
 import { Elysia } from "elysia";
-import { kafkaService } from "../../../services/kafka.js";
+import { kafkaService } from "../../../services/system/kafka.js";
 import { userConnectionManager } from "../../../services/userConnectionManager.js";
-import { redisService } from "../../../services/redis.js";
-
-// Store intervals for cleanup
-const intervals = new Map();
+import { redisService } from "../../../services/system/redis.js";
 
 export const websocketRoutes = new Elysia({ prefix: "/ws" })
 .ws("/", {
@@ -125,9 +122,6 @@ export const websocketRoutes = new Elysia({ prefix: "/ws" })
           timestamp: new Date().toISOString()
         }));
         
-        // Start heartbeat for the connected user
-        startHeartbeat(ws, session.userId);
-        
         // Log connection stats
         const stats = userConnectionManager.getConnectionStats();
         console.log(`📊 Connection stats:`, stats);
@@ -232,13 +226,6 @@ export const websocketRoutes = new Elysia({ prefix: "/ws" })
         console.error(`❌ Failed to send disconnect event to Kafka:`, error.message);
       });
     }
-    
-    // Clean up heartbeat interval
-    const interval = intervals.get(websocketId);
-    if (interval) {
-      clearInterval(interval);
-      intervals.delete(websocketId);
-    }
   },
 });
 
@@ -280,42 +267,4 @@ async function handleAuthenticatedMessage(ws, message) {
   }
 }
 
-/**
- * Start heartbeat for authenticated user
- */
-function startHeartbeat(ws, userId) {
-  let count = 0;
-  const sessionId = ws.data.sessionId;
-  const interval = setInterval(async () => {
-    try {
-      count++;
-      const heartbeatMessage = {
-        type: "heartbeat",
-        count,
-        userId,
-        sessionId,
-        timestamp: new Date().toISOString()
-      };
-      
-      ws.send(JSON.stringify(heartbeatMessage));
-      
-      // Send heartbeat to Kafka every 10 beats to reduce noise
-      if (count % 10 === 0) {
-        await kafkaService.send("websocket", {
-          type: "user_heartbeat",
-          userId,
-          sessionId,
-          websocketId: ws.data?.websocketId || ws.id,
-          count,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    } catch (error) {
-      console.error(`❌ Heartbeat error for user ${userId}:`, error.message);
-      clearInterval(interval);
-      intervals.delete(ws.data?.websocketId || ws.id);
-    }
-  }, 5000); // Send heartbeat every 5 seconds
-  
-  intervals.set(ws.data?.websocketId || ws.id, interval);
-}
+

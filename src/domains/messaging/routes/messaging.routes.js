@@ -3,7 +3,7 @@ import { messageRoutingService } from "../../../services/messageRoutingService.j
 import { userConnectionManager } from "../../../services/userConnectionManager.js";
 
 export const messagingApiRoutes = new Elysia({ prefix: "/api/messaging" })
-  // Send a message to a specific user
+  // Send a message to a specific user (all sessions)
   .post("/send", async ({ body }) => {
     try {
       const { userId, messageData, messageType } = body;
@@ -15,12 +15,14 @@ export const messagingApiRoutes = new Elysia({ prefix: "/api/messaging" })
         };
       }
 
-      const message = await messageRoutingService.sendMessageToUser(userId, messageData, messageType);
+      // Send through Kafka for reliable delivery
+      await messageRoutingService.sendMessageToUser(userId, messageData, messageType);
       
       return {
         success: true,
-        message: "Message queued for delivery",
-        data: message
+        message: "Message queued for delivery to user",
+        userId,
+        messageType: messageType || "notification"
       };
     } catch (error) {
       return {
@@ -31,6 +33,41 @@ export const messagingApiRoutes = new Elysia({ prefix: "/api/messaging" })
   }, {
     body: t.Object({
       userId: t.String(),
+      messageData: t.Any(),
+      messageType: t.Optional(t.String())
+    })
+  })
+
+  // Send a message to a specific session only
+  .post("/send-to-session", async ({ body }) => {
+    try {
+      const { sessionId, messageData, messageType } = body;
+      
+      if (!sessionId || messageData === undefined) {
+        return {
+          success: false,
+          error: "sessionId and messageData are required"
+        };
+      }
+
+      // Send through Kafka for reliable delivery
+      await messageRoutingService.sendMessageToSession(sessionId, messageData, messageType);
+      
+      return {
+        success: true,
+        message: "Message queued for delivery to session",
+        sessionId,
+        messageType: messageType || "notification"
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }, {
+    body: t.Object({
+      sessionId: t.String(),
       messageData: t.Any(),
       messageType: t.Optional(t.String())
     })
